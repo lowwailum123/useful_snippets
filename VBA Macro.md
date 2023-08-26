@@ -1,40 +1,46 @@
-In this version of the macro, I've added the ability to copy the entire rows that meet the condition to another worksheet ("Sheet2" in this case). The rows are copied below the existing data in the target worksheet. Each time a row is copied, the lastRowTarget variable is incremented to ensure that the next row is pasted in the correct position. The EntireRow.Copy method is used to copy the entire row.
-
-As before, remember to adjust the worksheet names and any other relevant details to match your specific Excel setup.
 ```VBA
 Sub CopyAndHighlightOldDates()
     Dim wsSource As Worksheet
     Dim wsTarget As Worksheet
-    Dim lastRowSource As Long
-    Dim lastRowTarget As Long
     Dim currentDate As Date
     Dim cell As Range
     Dim arrivedAtColumn As Range
+    Dim emailColumn As Range
     Dim headerCell As Range
-    Dim columnName As String
+    Dim columnLetter As String
+    Dim targetRow As Long
     
     ' Set the source and target worksheets
     Set wsSource = ThisWorkbook.Worksheets("Sheet1") ' Change "Sheet1" to your source sheet's name
-    Set wsTarget = ThisWorkbook.Worksheets("Sheet2") ' Change "Sheet2" to your target sheet's name
+    
+    ' Create or get the "Processed" worksheet
+    Set wsTarget = CreateOrGetProcessedWorksheet()
+    
+
     
     ' Find the header cell with the name "arrived_at" in the source worksheet
     Set headerCell = wsSource.Rows(1).Find(What:="arrived_at", LookIn:=xlValues, LookAt:=xlWhole)
     
     If Not headerCell Is Nothing Then
-        ' Get the column name
-        columnName = headerCell.Address(0, 0)
+        columnLetter = Split(Cells(1, headerCell.Column).Address, "$")(1) ' Get the column letter
         
-        ' Find the last row with data in the found column of the source worksheet
-        lastRowSource = wsSource.Cells(wsSource.Rows.Count, columnName).End(xlUp).Row
+        ' Set the column containing "arrived_at" dates and the email column in the source worksheet
+        Set arrivedAtColumn = wsSource.Range(columnLetter & "2:" & columnLetter & wsSource.Cells(wsSource.Rows.Count, "A").End(xlUp).Row)
         
-        ' Set the column containing "arrived_at" dates in the source worksheet
-        Set arrivedAtColumn = wsSource.Range(columnName & "2:" & columnName & lastRowSource)
+        ' Find the header cell with the name "email" in the source worksheet
+        Set headerCell = wsSource.Rows(1).Find(What:="email", LookIn:=xlValues, LookAt:=xlWhole)
+        If Not headerCell Is Nothing Then
+            Set emailColumn = wsSource.Range(columnLetter & "2:" & columnLetter & wsSource.Cells(wsSource.Rows.Count, "A").End(xlUp).Row)
+        End If
         
         ' Get the current date
         currentDate = Date
         
-        ' Find the last row with data in the target worksheet
-        lastRowTarget = wsTarget.Cells(wsTarget.Rows.Count, columnName).End(xlUp).Row + 1
+        ' Clear the target worksheet (except the header)
+        wsTarget.Rows.Clear
+        wsSource.Rows(1).Copy wsTarget.Rows(1)
+        
+        targetRow = 2 ' Start from the second row in the target worksheet
         
         ' Loop through each cell in the "arrived_at" column of the source worksheet
         For Each cell In arrivedAtColumn
@@ -44,10 +50,25 @@ Sub CopyAndHighlightOldDates()
                 monthsPassed = DateDiff("m", cell.Value, currentDate)
                 
                 ' Check if 2 or more months have passed
-                If monthsPassed >= 2 Then
-                    cell.EntireRow.Copy wsTarget.Rows(lastRowTarget)
-                    lastRowTarget = lastRowTarget + 1
-                    cell.Interior.Color = RGB(255, 0, 0) ' Highlight the cell in red
+                If monthsPassed <= -2 Then
+                    ' Copy the entire row to the target worksheet
+                    wsSource.Rows(cell.Row).Copy wsTarget.Rows(targetRow)
+                    
+                    ' Convert email column to hyperlinks
+                    If Not emailColumn Is Nothing Then
+                        ' Check if the current column is the "email" column
+                        If wsSource.Cells(1, cell.Column).Value = "email" Then
+                            emailColumn.Cells(cell.Row - 1, 1).Hyperlinks.Add _
+                                Anchor:=emailColumn.Cells(cell.Row - 1, 1), _
+                                Address:="mailto:" & emailColumn.Cells(cell.Row - 1, 1).Value
+                        End If
+                    End If
+                    
+                    targetRow = targetRow + 1
+                    
+                    ' Highlight the cell in red
+                    cell.Interior.Color = RGB(255, 0, 0)
+                    cell.Font.Color = RGB(255, 255, 255)
                 Else
                     cell.Interior.ColorIndex = xlNone ' Clear any previous highlighting
                 End If
@@ -56,6 +77,60 @@ Sub CopyAndHighlightOldDates()
     Else
         MsgBox "Column 'arrived_at' not found in the source worksheet."
     End If
+    ConvertEmailColumnToHyperlinks wsTarget
+    
 End Sub
+
+Function ConvertEmailColumnToHyperlinks(ByVal ws As Worksheet)
+    Dim headerCell As Range
+    Dim emailColumn As Range
+    
+    ' Find the header cell with the name "email" in the provided worksheet
+    Set headerCell = ws.Rows(1).Find(What:="email", LookIn:=xlValues, LookAt:=xlWhole)
+    
+    If Not headerCell Is Nothing Then
+        ' Set the email column based on the header cell's column
+        Set emailColumn = ws.Range(ws.Cells(2, headerCell.Column), ws.Cells(ws.Rows.Count, headerCell.Column).End(xlUp))
+        
+        ' Convert email column to hyperlinks
+        For Each cell In emailColumn
+            If cell.Value <> "" Then
+                Dim subject As String
+                Dim mailtoLink As String
+                subject = "Subject"
+                mailtoLink = "mailto:" & cell.Value & "?subject=" & subject
+                cell.Hyperlinks.Add _
+                    Anchor:=cell, _
+                    Address:=mailtoLink
+            End If
+        Next cell
+    End If
+End Function
+
+
+
+
+Function CreateOrGetProcessedWorksheet() As Worksheet
+    Dim wsProcessed As Worksheet
+    On Error Resume Next ' Turn off error handling temporarily
+    
+    ' Try to set the reference to the existing "Processed" worksheet
+    Set wsProcessed = ThisWorkbook.Worksheets("Processed")
+    
+    On Error GoTo 0 ' Reset error handling
+    
+    If wsProcessed Is Nothing Then
+        ' If "Processed" worksheet doesn't exist, add it
+        Set wsProcessed = ThisWorkbook.Worksheets.Add(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
+        wsProcessed.Name = "Processed"
+        
+        ' Call the function to convert the email column to hyperlinks in the new "Processed" worksheet
+        ConvertEmailColumnToHyperlinks wsProcessed
+
+    End If
+    
+    ' Return the reference to the "Processed" worksheet
+    Set CreateOrGetProcessedWorksheet = wsProcessed
+End Function
 
 ```
